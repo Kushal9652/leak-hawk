@@ -1,54 +1,90 @@
-import os
 import subprocess
-from pathlib import Path
+import os
+import shutil
 
-# Step 1: Clone the repository from GitHub
-def clone_repo(repo_url, destination):
-    if os.path.exists(destination):
-        print(f"[!] Folder '{destination}' already exists. Skipping clone.")
-        return
-    subprocess.run(['git', 'clone', repo_url, destination], check=True)
-    print(f"[✓] Repository cloned to: {destination}")
-
-# Step 2: Get a list of all commit hashes in the repo
-def get_commit_list(repo_dir):
-    os.chdir(repo_dir)
-    result = subprocess.run(['git', 'log', '--pretty=format:%H'], capture_output=True, text=True)
-    return result.stdout.strip().split('\n')
-
-# Step 3: Scan all commits and inspect important files
-def scan_all_commits(repo_dir):
-    initial_dir = os.getcwd()
-    os.chdir(repo_dir)
-    
-    commits = get_commit_list(repo_dir)
-    scanned_files = set()
-    
-    for commit in commits:
-        subprocess.run(['git', 'checkout', commit], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        print(f"\n[🔍] Scanning commit: {commit}")
-        
-        for file in Path('.').rglob('*'):
-            if file.is_file() and file.suffix in {'.js', '.py', '.ts', '.env', '.go'}:
-                full_path = f"{commit}:{file}"
-                if full_path not in scanned_files:
-                    print(f"    → Found: {file}")
-                    # 👇 You can pass the file to an ML model here
-                    scanned_files.add(full_path)
-
-    # Checkout back to main branch
-    subprocess.run(['git', 'checkout', 'main'], stdout=subprocess.DEVNULL)
-    os.chdir(initial_dir)
-    print("\n[✓] Scanning complete.")
-
-# Step 4: Main Function
-if __name__ == "__main__":
-    repo_url = input("Enter GitHub Repo URL: ").strip()
-    destination_folder = "repo-temp"
-
+def clone_repo(repo_url, clone_dir="repo-temp"):
+    print("[*] Cloning repository...")
     try:
-        clone_repo(repo_url, destination_folder)
-        scan_all_commits(destination_folder)
-    except Exception as e:
-        print(f"[✗] Error: {e}")
+        if os.path.exists(clone_dir):
+            shutil.rmtree(clone_dir)
 
+        subprocess.run(
+            ["git", "clone", repo_url, clone_dir],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        print(f"[✓] Repository cloned to: {clone_dir}")
+        return clone_dir
+    except subprocess.CalledProcessError:
+        print("[✗] Failed to clone repository.")
+        return None
+
+def run_trufflehog(repo_url):
+    print("[🔍] Running TruffleHog directly on GitHub URL...")
+    try:
+        result = subprocess.run(
+            ["trufflehog", repo_url],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        print("[✓] TruffleHog scan completed successfully.")
+        print("===== 🚨 TruffleHog Results 🚨 =====")
+        print(result.stdout)
+    except subprocess.CalledProcessError as e:
+        print("[✗] TruffleHog scan failed.")
+        print("STDOUT:\n", e.stdout)
+        print("STDERR:\n", e.stderr)
+    except FileNotFoundError:
+        print("[✗] TruffleHog is not installed or not in PATH.")
+
+def run_gitleaks(local_path):
+    print("[🔍] Running Gitleaks on local repo...")
+    try:
+        result = subprocess.run(
+            [
+                "gitleaks", "detect",
+                "--source", local_path,
+                "--report-format", "json",
+                "--report-path", "gitleaks-report.json"
+            ],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+
+        print("[✓] Gitleaks scan completed.")
+
+        if os.path.exists("gitleaks-report.json"):
+            with open("gitleaks-report.json", "r") as f:
+                data = f.read()
+                if data.strip() and data.strip() != "[]":
+                    print("===== 🚨 Gitleaks Results 🚨 =====")
+                    print(data)
+                else:
+                    print("No leaks found in JSON report.")
+        else:
+            print("Report file not found.")
+
+        if result.stderr:
+            print("STDERR:\n", result.stderr)
+    except FileNotFoundError:
+        print("[✗] Gitleaks is not installed or not in PATH.")
+
+
+def main():
+    repo_url = input("Enter GitHub Repo URL: ").strip()
+    run_trufflehog(repo_url)
+
+    local_path = clone_repo(repo_url)
+    if local_path:
+        run_gitleaks(local_path)
+        try:
+            shutil.rmtree(local_path)
+            print(f"[🧹] Removed temporary directory: {local_path}")
+        except Exception as e:
+            print(f"[⚠️] Failed to remove temporary directory: {e}")
+
+if __name__ == "__main__":
+    main()
