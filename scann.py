@@ -1,7 +1,6 @@
 import subprocess
 import os
 import shutil
-import sys
 
 def clone_repo(repo_url, clone_dir="repo-temp"):
     print("[*] Cloning repository...")
@@ -27,11 +26,16 @@ def run_trufflehog(repo_url):
         result = subprocess.run(
             ["trufflehog", repo_url],
             capture_output=True,
-            text=True
+            text=True,
+            check=True
         )
         print("[✓] TruffleHog scan completed successfully.")
         print("===== 🚨 TruffleHog Results 🚨 =====")
-        print(result.stdout or "No results from TruffleHog.")
+        print(result.stdout)
+    except subprocess.CalledProcessError as e:
+        # Removed failure message as requested
+        print("STDOUT:\n", e.stdout)
+        print("STDERR:\n", e.stderr)
     except FileNotFoundError:
         print("[✗] TruffleHog is not installed or not in PATH.")
 
@@ -46,7 +50,8 @@ def run_gitleaks(local_path):
                 "--report-path", "gitleaks-report.json"
             ],
             capture_output=True,
-            text=True
+            text=True,
+            check=False
         )
 
         print("[✓] Gitleaks scan completed.")
@@ -67,12 +72,9 @@ def run_gitleaks(local_path):
     except FileNotFoundError:
         print("[✗] Gitleaks is not installed or not in PATH.")
 
-def main():
-    if len(sys.argv) > 1:
-        repo_url = sys.argv[1]
-    else:
-        repo_url = input("Enter GitHub Repo URL: ").strip()
 
+def main():
+    repo_url = input("Enter GitHub Repo URL: ").strip()
     run_trufflehog(repo_url)
 
     local_path = clone_repo(repo_url)

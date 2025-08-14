@@ -1,0 +1,23 @@
+[
+ {
+  "RuleID": "generic-api-key",
+  "Description": "Detected a Generic API Key, potentially exposing access to various services and sensitive operations.",
+  "StartLine": 24,
+  "EndLine": 24,
+  "StartColumn": 14,
+  "EndColumn": 56,
+  "Match": "apiKey = '214703b1261b254d5b3f416d6955c273'",
+  "Secret": "214703b1261b254d5b3f416d6955c273",
+  "File": "src/Components/UserInfo/Bmi.jsx",
+  "SymlinkFile": "",
+  "Commit": "4fab1c36b0517caa8f7fb69f937887908f630e61",
+  "Link": "https://github.com/Kushal9652/Project/blob/4fab1c36b0517caa8f7fb69f937887908f630e61/src/Components/UserInfo/Bmi.jsx#L24",
+  "Entropy": 3.5306392,
+  "Author": "Kushal9652",
+  "Email": "kushalkumar1617@gmail.com",
+  "Date": "2023-10-17T05:04:52Z",
+  "Message": "final commit",
+  "Tags": [],
+  "Fingerprint": "4fab1c36b0517caa8f7fb69f937887908f630e61:src/Components/UserInfo/Bmi.jsx:generic-api-key:24"
+ }
+]
