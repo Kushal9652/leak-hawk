@@ -1,0 +1,2 @@
+Rule,File,Line,Match_Secret,Commit,Link
+generic-api-key,.env,7,CLOUDINARY_API_SECRET=EdzszuA-s3BSCXXJE7xpag4m-j8,eda910863b2c4c7b40d33fe8152098371b3a297f,https://github.com/MithileshThallam/goodByteBackend/blob/eda910863b2c4c7b40d33fe8152098371b3a297f/.env#L7
