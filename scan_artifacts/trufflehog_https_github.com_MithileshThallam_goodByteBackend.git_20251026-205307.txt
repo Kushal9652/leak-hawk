@@ -1,0 +1,12 @@
+✅ Found verified result 🐷🔑
+Detector Type: MongoDB
+Decoder Type: PLAIN
+Raw result: mongodb+srv://thallammithilesh:q4mewDtETUyyMdYa@cluster0.knrrmrd.mongodb.net/GoodByte?appName=Cluster0&retryWrites=true&w=majority
+Rotation_guide: https://howtorotate.com/docs/tutorials/mongo/
+Commit: eda910863b2c4c7b40d33fe8152098371b3a297f
+Email: mithilesh <thallammithilesh@gmail.com>
+File: .env
+Line: 1
+Repository: https://github.com/MithileshThallam/goodByteBackend.git
+Repository_local_path: /var/folders/jk/kvr_syfn16qbr32pgl5krg9r0000gn/T/trufflehog-17240-1302973258
+Timestamp: 2025-05-05 19:45:48 +0000

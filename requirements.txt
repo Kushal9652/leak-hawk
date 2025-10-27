@@ -3,3 +3,6 @@ requests
 jsbeautifier
 lxml
 xgboost
+pandas
+scikit-learn
+streamlit

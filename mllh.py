@@ -36,20 +36,39 @@ def clone_repo(repo_url, clone_dir="repo-temp"):
     )
     return clone_dir
 
+import re
+# ... existing code ...
 def run_trufflehog(repo_url):
+    """Run trufflehog and return its sanitized output as a UTF-8 string."""
     try:
-        # Using basic trufflehog command without --no-update
         result = subprocess.run(
-            ["trufflehog", repo_url],
+            ["trufflehog", "git", repo_url, "--no-update"],
             capture_output=True,
-            text=True,
             check=False
         )
-        out = (result.stdout or "").strip()
-        err = (result.stderr or "").strip()
-        return out if out else (err if err else "No output from TruffleHog.")
+        # Decode stdout and stderr, ignoring any invalid characters
+        output = result.stdout.decode('utf-8', errors='ignore')
+        
+        # Sanitize the output to remove non-printable characters
+        # This regex keeps printable characters and newlines
+        sanitized_output = re.sub(r'[^\x20-\x7E\n\r\t]', '', output).strip()
+
+        if sanitized_output:
+            return sanitized_output
+        
+        # If no stdout, check stderr
+        stderr_output = result.stderr.decode('utf-8', errors='ignore')
+        sanitized_stderr = re.sub(r'[^\x20-\x7E\n\r\t]', '', stderr_output).strip()
+
+        if sanitized_stderr:
+            return sanitized_stderr
+            
+        return "No output from TruffleHog."
+
     except FileNotFoundError:
-        return "[✗] LeakHawk detection engine not installed or not in PATH."
+        return "[✗] LeakHawk detection engine (trufflehog) not installed or not in PATH."
+    except Exception as e:
+        return f"[✗] An unexpected error occurred while running TruffleHog: {str(e)}"
 
 def run_gitleaks(local_path):
     try:
@@ -104,16 +123,30 @@ def extract_text_for_ml(finding: dict) -> str:
     """
     Build the text fed to the ML model from a LeakHawk finding.
     Prioritize matched content, then context.
+    Handles various JSON field name formats.
     """
     parts = []
-    for key in ("Match", "Secret", "Description"):
+    
+    # Try different possible field names for secret/match
+    for key in ("Match", "Secret", "secret", "match", "Raw", "raw", "RawV2"):
         v = finding.get(key)
         if v:
             parts.append(str(v))
-    for k in ("RuleID", "File", "Message", "Commit"):
+            break
+    
+    # Try different field names for description
+    for key in ("Description", "description", "Message", "message"):
+        v = finding.get(key)
+        if v:
+            parts.append(str(v))
+            break
+    
+    # Add rule/detector information
+    for k in ("RuleID", "DetectorName", "DetectorType", "detector_name", "rule_id", "File", "file", "Commit", "commit"):
         v = finding.get(k)
         if v:
             parts.append(str(v))
+    
     text = " | ".join(parts).strip()
     return text if text else str(finding)
 
@@ -245,7 +278,7 @@ if run_clicked:
         st.subheader("🔍 Secret Detection Results")
         if show_raw_trufflehog:
             with st.expander("📜 Raw Output (toggle)", expanded=False):
-                st.markdown(f"<div class='result-box'>{trufflehog_output}</div>", unsafe_allow_html=True)
+                st.code(trufflehog_output, language=None)
                 download_text_button(trufflehog_output, "leakhawk_engine_output.txt", "📥 Download Engine Output")
         else:
             st.caption("Raw engine output is hidden (enable in sidebar).")
@@ -315,6 +348,14 @@ def classify_findings(findings: list):
     if not findings:
         st.info("No findings to classify.")
         return
+    
+    # Debug: Show all available fields from the first finding
+    if findings and len(findings) > 0:
+        st.info(f"📊 Processing {len(findings)} findings...")
+        with st.expander("🔍 Available fields in first finding (Debug Info)", expanded=False):
+            first_finding = findings[0]
+            st.write("**Top-level keys:**", list(first_finding.keys()))
+            st.json(first_finding)
 
     # Build feature vectors for ML (4 features expected by the model)
     ml_data = []
@@ -372,19 +413,102 @@ def classify_findings(findings: list):
 
     ml_rows = []
     for finding, pred_label, conf in zip(findings, preds_decoded, confidences):
-        # Extract all available fields from Gitleaks JSON
-        rule = finding.get("RuleID", "N/A")
-        file_ = finding.get("File", "N/A")
-        secret = finding.get("Match", "") or finding.get("Secret", "")
-        commit = finding.get("Commit", "N/A")
-        link = finding.get("Link", "")
-        start_line = finding.get("StartLine", "")
-        end_line = finding.get("EndLine", "")
-        author = finding.get("Author", "N/A")
-        email = finding.get("Email", "N/A")
-        commit_date = finding.get("Date", "N/A")
-        commit_message = finding.get("Message", "N/A")
-        description = finding.get("Description", "N/A")
+        # Helper function to safely get nested values
+        def get_nested(d, *keys, default="N/A"):
+            for key in keys:
+                if isinstance(d, dict):
+                    d = d.get(key, {})
+                else:
+                    return default
+            return d if d and d != {} else default
+        
+        # Function to search for a value by trying multiple key names
+        def find_value(obj, possible_keys, default="N/A"):
+            if isinstance(obj, dict):
+                for key in possible_keys:
+                    if key in obj and obj[key]:
+                        return obj[key]
+                # Also check case-insensitive
+                obj_lower = {k.lower(): v for k, v in obj.items()}
+                for key in possible_keys:
+                    if key.lower() in obj_lower and obj_lower[key.lower()]:
+                        return obj_lower[key.lower()]
+            return default
+        
+        # Extract detector/rule name
+        rule = find_value(finding, ["RuleID", "DetectorName", "DetectorType", "detector_name", 
+                                     "rule_id", "detector", "rule", "type"])
+        
+        # Extract file path
+        file_ = find_value(finding, ["File", "file", "path", "filepath", "file_path"])
+        if file_ == "N/A":
+            file_ = get_nested(finding, "SourceMetadata", "Data", "Filesystem", "file")
+        
+        # Extract the secret/token - this is the most important field!
+        secret = find_value(finding, ["Match", "Secret", "Raw", "RawV2", "raw", "secret", 
+                                     "match", "token", "key", "password", "credential",
+                                     "value", "data"])
+        
+        # If still not found, search through ALL fields for anything that looks like secret data
+        if not secret or secret == "N/A":
+            for key, value in finding.items():
+                if isinstance(value, str) and len(value) > 10 and len(value) < 500:
+                    # Look for base64-like strings, hex strings, or tokens
+                    if any(x in key.lower() for x in ['raw', 'secret', 'match', 'token', 'key', 'pass', 'credential']):
+                        secret = value
+                        break
+        
+        # Extract commit hash
+        commit = find_value(finding, ["Commit", "commit", "commit_hash", "hash", "sha"])
+        if commit == "N/A":
+            commit = get_nested(finding, "SourceMetadata", "Data", "Git", "commit")
+        
+        # Extract link/URL
+        link = find_value(finding, ["Link", "link", "url", "URL", "permalink"])
+        
+        if (not link or link == "N/A") and commit and commit != "N/A":
+            # Try to construct GitHub link
+            repo = find_value(finding, ["repository", "repo", "Repository", "Repo"])
+            if repo == "N/A":
+                repo = get_nested(finding, "SourceMetadata", "Data", "Git", "repository")
+            if repo and repo != "N/A":
+                link = f"{repo}/commit/{commit}"
+        
+        # Extract line numbers
+        start_line = find_value(finding, ["StartLine", "start_line", "line", "Line", "line_number"])
+        if start_line == "N/A":
+            start_line = get_nested(finding, "SourceMetadata", "Data", "Filesystem", "line")
+        
+        end_line = find_value(finding, ["EndLine", "end_line", "EndLine"])
+        
+        # Extract author
+        author = find_value(finding, ["Author", "author", "committer", "Committer", "user"])
+        if author == "N/A":
+            author = get_nested(finding, "SourceMetadata", "Data", "Git", "author")
+        
+        # Extract email
+        email = find_value(finding, ["Email", "email", "author_email", "committer_email"])
+        if email == "N/A":
+            email = get_nested(finding, "SourceMetadata", "Data", "Git", "email")
+        
+        # Extract date/timestamp
+        commit_date = find_value(finding, ["Date", "date", "timestamp", "Timestamp", 
+                                          "created_at", "time"])
+        if commit_date == "N/A":
+            commit_date = get_nested(finding, "SourceMetadata", "Data", "Git", "timestamp")
+        
+        # Extract commit message
+        commit_message = find_value(finding, ["Message", "message", "commit_message", 
+                                             "CommitMessage", "description"])
+        if commit_message == "N/A":
+            commit_message = get_nested(finding, "SourceMetadata", "Data", "Git", "message")
+        
+        # Extract description
+        description = find_value(finding, ["Description", "description", "details", "info"])
+        
+        # If we still have nothing, just dump the whole finding as description
+        if all(v == "N/A" or v == "" for v in [rule, file_, secret, commit, author]):
+            description = str(finding)[:200] + "..."
         
         risk = prob_to_risk(conf)
         anomaly = flag_anomaly(rule, pred_label, conf)
@@ -461,10 +585,19 @@ if enable_ml and ml_ready:
                 # single-finding dict case
                 findings = [findings]
             if not isinstance(findings, list):
-                st.error("Uploaded JSON must be a list of Gitleaks findings.")
+                st.error("Uploaded JSON must be a list of findings.")
             else:
+                st.info(f"📊 Loaded {len(findings)} findings from uploaded JSON file.")
+                
+                # Show a preview of the first finding's structure for debugging
+                if findings and len(findings) > 0:
+                    with st.expander("🔍 Preview first finding structure (for debugging)", expanded=False):
+                        st.json(findings[0])
+                
                 classify_findings(findings)
         except Exception as e:
             st.error(f"Failed to parse uploaded JSON: {e}")
+            import traceback
+            st.code(traceback.format_exc())
 else:
     st.caption("ML post-processing is disabled or artifacts are missing.")
